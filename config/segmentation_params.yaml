@@ -1,7 +1,7 @@
 semantic_segmentation_node:
   ros__parameters:
-    config_file: src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py
-    checkpoint_file: src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth
+    config_file: /home/lukas/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py
+    checkpoint_file: /home/lukas/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth
     input_topic: /hazard_front/zed_node_front/left/image_rect_color
     output_topic: /segmentation/image
     

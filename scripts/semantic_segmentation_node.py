@@ -123,7 +123,7 @@ class SemanticSegmentationNode(Node):
             segmentation_colored[np.where(segmentation_map == label)] = color
 
         # Blend segmentation mask with the original frame
-        alpha = 0.8
+        alpha = 1.0
         blended_frame = cv2.addWeighted(frame, 1 - alpha, segmentation_colored, alpha, 0)
 
         # Convert OpenCV image back to ROS Image

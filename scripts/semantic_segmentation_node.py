@@ -12,8 +12,8 @@ class SemanticSegmentationNode(Node):
         super().__init__('semantic_segmentation_node')
         
         # Declare parameters with default values in case they are not set
-        self.declare_parameter('config_file', '/home/lukas/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py')
-        self.declare_parameter('checkpoint_file', '/home/lukas/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth')
+        self.declare_parameter('config_file', '/home/robolab/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py')
+        self.declare_parameter('checkpoint_file', '/home/robolab/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth')
         self.declare_parameter('input_topic', '/hazard_front/zed_node_front/left/image_rect_color')
         self.declare_parameter('output_topic', '/segmentation/image')
 
@@ -94,22 +94,27 @@ class SemanticSegmentationNode(Node):
         return pred_seg
     
     def image_callback(self, msg):
-        self.get_logger().info("Received an image. Processing...")
+        #self.get_logger().info("Received an image. Processing...")
 
         # Convert ROS Image to OpenCV
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        
+        # Resize the frame to 1280x720
+        frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
+        
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
 
         # Run inference
         result = inference_model(self.model, img_rgb)
 
         # Get the predicted class map (pred_seg is of shape [720, 1280])
         pred_seg = result.pred_sem_seg.data[0].cpu().unsqueeze(0)
-        self.get_logger().info(f"pred_seg shape: {pred_seg.shape}")
+        #self.get_logger().info(f"pred_seg shape: {pred_seg.shape}")
 
         # Get the logits for all classes (seg_logits is of shape [720, 1280] for all pixels)
         seg_logits = result.seg_logits.data.cpu()
-        self.get_logger().info(f"seg_logits shape: {seg_logits.shape}")
+        #self.get_logger().info(f"seg_logits shape: {seg_logits.shape}")
 
         # Replace class 7 with second-highest prediction
         pred_seg = self.replace_class_with_second_highest(pred_seg, seg_logits, 7)
@@ -132,7 +137,7 @@ class SemanticSegmentationNode(Node):
 
         # Publish the segmented image
         self.image_pub.publish(segmented_msg)
-        self.get_logger().info("Published segmented image.")
+        #self.get_logger().info("Published segmented image.")
 
 def main(args=None):
     rclpy.init(args=args)

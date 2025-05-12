@@ -1,4 +1,5 @@
 import rclpy
+import os
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -12,16 +13,18 @@ class SemanticSegmentationNode(Node):
         super().__init__('semantic_segmentation_node')
         
         # Declare parameters with default values in case they are not set
-        self.declare_parameter('config_file', '/home/robolab/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py')
-        self.declare_parameter('checkpoint_file', '/home/robolab/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth')
+        self.declare_parameter('config_file', '~/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py')
+        self.declare_parameter('checkpoint_file', '~/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth')
         self.declare_parameter('input_topic', '/hazard_front/zed_node_front/left/image_rect_color')
         self.declare_parameter('output_topic', '/segmentation/image')
+        self.declare_parameter('confidence_topic', '/segmentation/confidence')
 
         # Get parameters
-        self.config_file = self.get_parameter('config_file').get_parameter_value().string_value
-        self.checkpoint_file = self.get_parameter('checkpoint_file').get_parameter_value().string_value
+        self.config_file = os.path.expanduser(self.get_parameter('config_file').get_parameter_value().string_value)
+        self.checkpoint_file = os.path.expanduser(self.get_parameter('checkpoint_file').get_parameter_value().string_value)
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         self.output_topic = self.get_parameter('output_topic').get_parameter_value().string_value
+        self.confidence_topic = self.get_parameter('confidence_topic').get_parameter_value().string_value
 
 
         # Define color mappings
@@ -58,6 +61,8 @@ class SemanticSegmentationNode(Node):
 
         # Publisher for segmented image
         self.image_pub = self.create_publisher(Image, self.output_topic, 10)
+        # Publisher for confidence map
+        self.confidence_pub = self.create_publisher(Image, self.confidence_topic, 10)
 
         self.get_logger().info(f"SemanticSegmentationNode initialized. Subscribing to {self.input_topic}")
 
@@ -92,7 +97,8 @@ class SemanticSegmentationNode(Node):
         pred_seg[mask] = second_best[mask]
 
         return pred_seg
-    
+
+
     def image_callback(self, msg):
         #self.get_logger().info("Received an image. Processing...")
 
@@ -119,13 +125,31 @@ class SemanticSegmentationNode(Node):
         # Replace class 7 with second-highest prediction
         pred_seg = self.replace_class_with_second_highest(pred_seg, seg_logits, 7)
 
+
         # Convert to numpy for visualization
         segmentation_map = pred_seg.numpy()
 
         # Create an overlay
         segmentation_colored = np.zeros_like(frame, dtype=np.uint8)
+        confidence_map = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
         for label, color in self.color_map.items():
-            segmentation_colored[np.where(segmentation_map == label)] = color
+            mask = (segmentation_map == label)
+            
+            # Skip if the mask is empty
+            if not np.any(mask):
+                continue
+            
+            segmentation_colored[mask] = color
+
+            # Store the confidence of the dominant class in the confidence map
+            confidence_values = seg_logits[label, :, :].numpy()  # Get logits for the current label
+            confidence_values = (confidence_values - np.min(confidence_values)) / (np.max(confidence_values) - np.min(confidence_values))  # Normalize to [0, 1]
+            confidence_values = (confidence_values * 100).astype(np.uint8)  # Scale to [0, 100] and convert to uint8
+            confidence_values = cv2.resize(confidence_values, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)  # Resize to match the original frame
+            confidence_map[mask] = confidence_values[mask]
+
+        confidence_msg = self.bridge.cv2_to_imgmsg(confidence_map, encoding='mono8')
+        confidence_msg.header = msg.header
 
         # Blend segmentation mask with the original frame
         alpha = 1.0
@@ -137,6 +161,7 @@ class SemanticSegmentationNode(Node):
 
         # Publish the segmented image
         self.image_pub.publish(segmented_msg)
+        self.confidence_pub.publish(confidence_msg)
         #self.get_logger().info("Published segmented image.")
 
 def main(args=None):

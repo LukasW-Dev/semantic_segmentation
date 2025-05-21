@@ -13,11 +13,11 @@ class SemanticSegmentationNode(Node):
         super().__init__('semantic_segmentation_node')
         
         # Declare parameters with default values in case they are not set
-        self.declare_parameter('config_file', '~/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py')
-        self.declare_parameter('checkpoint_file', '~/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth')
-        self.declare_parameter('input_topic', '/hazard_front/zed_node_front/left/image_rect_color')
-        self.declare_parameter('output_topic', '/segmentation/image')
-        self.declare_parameter('confidence_topic', '/segmentation/confidence')
+        self.declare_parameter('config_file', None)
+        self.declare_parameter('checkpoint_file', None)
+        self.declare_parameter('input_topic', None)
+        self.declare_parameter('output_topic', None)
+        self.declare_parameter('confidence_topic', None)
 
         # Get parameters
         self.config_file = os.path.expanduser(self.get_parameter('config_file').get_parameter_value().string_value)

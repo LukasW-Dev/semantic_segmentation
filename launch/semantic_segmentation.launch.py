@@ -10,5 +10,6 @@ def generate_launch_description():
             name='semantic_segmentation_node',
             output='screen',
             parameters=['src/semantic_segmentation/config/segmentation_params.yaml']
+            # parameters=['src/semantic_segmentation/config/box.yaml']
         )
     ])

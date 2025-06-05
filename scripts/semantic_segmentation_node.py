@@ -51,8 +51,9 @@ class SemanticSegmentationNode(Node):
         }
 
         # Initialize the model
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.model = init_model(self.config_file, self.checkpoint_file, device=device)
+        device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model = init_model(self.config_file, self.checkpoint_file, device=device_str)
+        self.device = torch.device(device_str)
         self.bridge = CvBridge()
         
         # Subscribe to image topic
@@ -84,11 +85,19 @@ class SemanticSegmentationNode(Node):
         pred_seg = pred_seg.squeeze(dim=0)
         assert pred_seg.shape == seg_logits.shape[1:], "pred_seg shape must match spatial dims of seg_logits"
 
-        # Sort the logits along the class dimension
-        _, sorted_indices = torch.sort(seg_logits, dim=0, descending=True)
+        # # Sort the logits along the class dimension
+        # _, sorted_indices = torch.sort(seg_logits, dim=0, descending=True)
 
-        # Get second-best prediction per pixel
-        second_best = sorted_indices[1]  # shape: [H, W]
+        # # Get second-best prediction per pixel
+        # second_best = sorted_indices[1]  # shape: [H, W]
+
+        # Instead of sort, use topk(k=2) to get the indices of the top-2 classes per pixel
+        # seg_logits has shape [C, H, W]
+        logits_flat = seg_logits.view(seg_logits.shape[0], -1)  # [C, H*W]
+        # top2_vals, top2_idx_each = torch.topk(logits_flat, k=2, dim=0)
+        # → top2_idx_each is shape [2, H*W]. Reshape back to [2, H, W]:
+        top2_idx_each = torch.topk(seg_logits, k=2, dim=0)[1]  # directly on [C, H, W] dims
+        second_best = top2_idx_each[1]  # shape [H, W]
 
         # Find mask where target_class is predicted
         mask = (pred_seg == target_class)
@@ -100,69 +109,81 @@ class SemanticSegmentationNode(Node):
 
 
     def image_callback(self, msg):
-        #self.get_logger().info("Received an image. Processing...")
-
-        # Convert ROS Image to OpenCV
+        # Convert ROS Image to OpenCV BGR
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        
-        # Resize the frame to 1280x720
+
+        # Resize once (1280×720)
         frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
-        
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+        # -----------------------------
+        # 1. RUN INFERENCE (on GPU)
+        # -----------------------------
+        # Wrap in no_grad() to avoid any grad‐tracking overhead
+        with torch.no_grad():
+            result = inference_model(self.model, img_rgb)
+            # result.pred_sem_seg likely already on GPU, but to be sure:
+            pred_seg = result.pred_sem_seg.data[0].unsqueeze(0).to(self.device)   # [1, H, W]
+            seg_logits = result.seg_logits.data.to(self.device)                   # [C, H, W]
 
-        # Run inference
-        result = inference_model(self.model, img_rgb)
+        # -----------------------------
+        # 2. REPLACE CLASS 7 ON GPU
+        # -----------------------------
+        # (Assumes replace_class_with_second_highest works with GPU tensors)
+        pred_seg = self.replace_class_with_second_highest(pred_seg, seg_logits, target_class=7)
+        # Now pred_seg is [1, H, W], seg_logits is [C, H, W], all on self.device
 
-        # Get the predicted class map (pred_seg is of shape [720, 1280])
-        pred_seg = result.pred_sem_seg.data[0].cpu().unsqueeze(0)
-        #self.get_logger().info(f"pred_seg shape: {pred_seg.shape}")
+        # -----------------------------
+        # 3. VECTORIZE COLOR + CONFIDENCE (ALL ON GPU)
+        # -----------------------------
 
-        # Get the logits for all classes (seg_logits is of shape [720, 1280] for all pixels)
-        seg_logits = result.seg_logits.data.cpu()
-        #self.get_logger().info(f"seg_logits shape: {seg_logits.shape}")
+        # 3a. Build a palette‐tensor for all labels (shape [C, 3], dtype=uint8, on GPU)
+        #     We assume color_map keys from 0..18 in order
+        palette_list = [self.color_map[i] for i in range(len(self.color_map))]
+        palette = torch.tensor(palette_list, device=self.device, dtype=torch.uint8)  # [C, 3]
 
-        # Replace class 7 with second-highest prediction
-        pred_seg = self.replace_class_with_second_highest(pred_seg, seg_logits, 7)
+        # 3b. Get height/width
+        _, H, W = seg_logits.shape
 
+        # 3c. Build the colored segmentation (H×W×3) with one gather
+        pred_flat = pred_seg.squeeze(0).long()                        # [H, W], values in 0..C-1
+        colored_tensor = palette[pred_flat]                            # [H, W, 3], uint8, on GPU
 
-        # Convert to numpy for visualization
-        segmentation_map = pred_seg.numpy()
+        # 3d. Normalize logits to [0..100] per-channel, then gather confidence per-pixel
+        mins = seg_logits.amin(dim=(1, 2), keepdim=True)               # [C, 1, 1]
+        maxs = seg_logits.amax(dim=(1, 2), keepdim=True)               # [C, 1, 1]
+        normed = ((seg_logits - mins) / (maxs - mins + 1e-6)) * 100.0   # [C, H, W], float32
+        normed = normed.to(torch.uint8)                                # [C, H, W], uint8
 
-        # Create an overlay
-        segmentation_colored = np.zeros_like(frame, dtype=np.uint8)
-        confidence_map = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
-        for label, color in self.color_map.items():
-            mask = (segmentation_map == label)
-            
-            # Skip if the mask is empty
-            if not np.any(mask):
-                continue
-            
-            segmentation_colored[mask] = color
+        # Flatten spatial dims so we can index in one shot
+        flat_idx = pred_flat.view(-1)                                  # [H*W]
+        flat_normed = normed.view(seg_logits.shape[0], -1)             # [C, H*W]
+        device_idx = torch.arange(H * W, device=self.device)           # [H*W]
+        flat_conf = flat_normed[flat_idx, device_idx]                  # [H*W], uint8
+        conf_map_tensor = flat_conf.view(H, W)                         # [H, W], uint8, on GPU
 
-            # Store the confidence of the dominant class in the confidence map
-            confidence_values = seg_logits[label, :, :].numpy()  # Get logits for the current label
-            confidence_values = (confidence_values - np.min(confidence_values)) / (np.max(confidence_values) - np.min(confidence_values))  # Normalize to [0, 1]
-            confidence_values = (confidence_values * 100).astype(np.uint8)  # Scale to [0, 100] and convert to uint8
-            confidence_values = cv2.resize(confidence_values, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)  # Resize to match the original frame
-            confidence_map[mask] = confidence_values[mask]
+        # -----------------------------
+        # 4. MOVE TO CPU ONCE
+        # -----------------------------
+        segmentation_colored = colored_tensor.cpu().numpy()            # [H, W, 3], uint8 BGR
+        confidence_map = conf_map_tensor.cpu().numpy()                 # [H, W], uint8
 
+        # -----------------------------
+        # 5. PUBLISH
+        # -----------------------------
+        # Convert confidence_map to ROS Image (mono8)
         confidence_msg = self.bridge.cv2_to_imgmsg(confidence_map, encoding='mono8')
         confidence_msg.header = msg.header
 
-        # Blend segmentation mask with the original frame
+        # Blend segmentation overlay with original frame (both are BGR)
         alpha = 1.0
         blended_frame = cv2.addWeighted(frame, 1 - alpha, segmentation_colored, alpha, 0)
-
-        # Convert OpenCV image back to ROS Image
+        # Convert blended_frame (BGR) → ROS Image as RGB8 (cv_bridge will reorder channels)
         segmented_msg = self.bridge.cv2_to_imgmsg(blended_frame, encoding='rgb8')
         segmented_msg.header = msg.header
 
-        # Publish the segmented image
         self.image_pub.publish(segmented_msg)
         self.confidence_pub.publish(confidence_msg)
-        #self.get_logger().info("Published segmented image.")
 
 def main(args=None):
     rclpy.init(args=args)

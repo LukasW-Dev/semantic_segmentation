@@ -109,6 +109,9 @@ class SemanticSegmentationNode(Node):
 
 
     def image_callback(self, msg):
+        # # Measure Callback Time
+        # start_time = self.get_clock().now()
+
         # Convert ROS Image to OpenCV BGR
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
@@ -184,6 +187,11 @@ class SemanticSegmentationNode(Node):
 
         self.image_pub.publish(segmented_msg)
         self.confidence_pub.publish(confidence_msg)
+
+        # # Log the processing time
+        # end_time = self.get_clock().now()
+        # elapsed_time = (end_time - start_time).nanoseconds / 1e6
+        # self.get_logger().info(f"Processed image in {elapsed_time:.2f} ms")
 
 def main(args=None):
     rclpy.init(args=args)

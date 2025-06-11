@@ -116,7 +116,7 @@ class SemanticSegmentationNode(Node):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
         # Resize once (1280×720)
-        frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
+        #frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # -----------------------------

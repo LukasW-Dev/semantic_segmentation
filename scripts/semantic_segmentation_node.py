@@ -7,6 +7,7 @@ import torch
 import cv2
 import numpy as np
 from mmseg.apis import inference_model, init_model
+import time
 
 class SemanticSegmentationNode(Node):
     def __init__(self):
@@ -116,7 +117,7 @@ class SemanticSegmentationNode(Node):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
         # Resize once (1280×720)
-        #frame = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
+        frame = cv2.resize(frame, (768, 480), interpolation=cv2.INTER_LINEAR)
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # -----------------------------
@@ -170,6 +171,9 @@ class SemanticSegmentationNode(Node):
         # -----------------------------
         segmentation_colored = colored_tensor.cpu().numpy()            # [H, W, 3], uint8 BGR
         confidence_map = conf_map_tensor.cpu().numpy()                 # [H, W], uint8
+
+        # sleep to simulate processing time
+        # time.sleep(0.05)
 
         # -----------------------------
         # 5. PUBLISH

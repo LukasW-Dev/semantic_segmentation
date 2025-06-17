@@ -1,0 +1,10 @@
+semantic_segmentation_node:
+  ros__parameters:
+    config_file: ~/ros2_ws/src/semantic_segmentation/model_config/mask2former/mask2former_swin-l-in22k-384x384-pre_2xb20-80k_wildscenes_standard-512x512.py
+    checkpoint_file: ~/ros2_ws/src/semantic_segmentation/pretrained_models/mask2former_swin_wildscenes.pth
+    input_topic: /front_camera/rgb/image_raw
+    output_topic: /segmentation/image
+    confidence_topic: /segmentation/confidence
+    image_width: 768
+    image_height: 480
+    

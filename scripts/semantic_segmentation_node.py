@@ -19,6 +19,9 @@ class SemanticSegmentationNode(Node):
         self.declare_parameter('input_topic', None)
         self.declare_parameter('output_topic', None)
         self.declare_parameter('confidence_topic', None)
+        self.declare_parameter('image_width', 0)
+        self.declare_parameter('image_height', 0)
+
 
         # Get parameters
         self.config_file = os.path.expanduser(self.get_parameter('config_file').get_parameter_value().string_value)
@@ -26,6 +29,9 @@ class SemanticSegmentationNode(Node):
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         self.output_topic = self.get_parameter('output_topic').get_parameter_value().string_value
         self.confidence_topic = self.get_parameter('confidence_topic').get_parameter_value().string_value
+        self.width = self.get_parameter('image_width').get_parameter_value().integer_value
+        self.height = self.get_parameter('image_height').get_parameter_value().integer_value
+
 
 
         # Define color mappings
@@ -116,8 +122,8 @@ class SemanticSegmentationNode(Node):
         # Convert ROS Image to OpenCV BGR
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-        # Resize once (1280×720)
-        frame = cv2.resize(frame, (768, 480), interpolation=cv2.INTER_LINEAR)
+        # Resize
+        frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # -----------------------------
